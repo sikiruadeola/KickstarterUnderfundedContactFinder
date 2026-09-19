@@ -1,0 +1,93 @@
+{
+    "title": "Kickstarter Underfunded Contact Finder",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "categoryId": {
+            "title": "Category",
+            "type": "integer",
+            "description": "Which Kickstarter category to search. Design is 7, Film and Video is 10, Games is 12, Technology is 16. One category per run, matching how each has its own outreach batch.",
+            "editor": "select",
+            "enum": [7, 10, 12, 16],
+            "enumTitles": ["Design", "Film & Video", "Games", "Technology"],
+            "default": 16
+        },
+        "states": {
+            "title": "Project states to include",
+            "type": "array",
+            "description": "Live campaigns are still actively raising money. Failed campaigns already ended without reaching their goal. Successful projects are never searched, since only unfunded creators matter here.",
+            "editor": "select",
+            "items": {
+                "type": "string",
+                "enum": ["live", "failed"],
+                "enumTitles": ["Live", "Failed"]
+            },
+            "default": ["live", "failed"]
+        },
+        "sort": {
+            "title": "Sort order",
+            "type": "string",
+            "description": "How Kickstarter orders the results within each state searched.",
+            "editor": "select",
+            "enum": ["newest", "end_date", "magic", "popularity"],
+            "enumTitles": ["Newest", "Ending soonest", "Magic (Kickstarter's own mix)", "Popularity"],
+            "default": "newest"
+        },
+        "maxPagesPerState": {
+            "title": "Maximum search pages per state",
+            "type": "integer",
+            "description": "Kickstarter's own search caps out at roughly two hundred pages per query no matter what is asked for, so raising this past that has no effect.",
+            "editor": "number",
+            "default": 200,
+            "minimum": 1,
+            "maximum": 200
+        },
+        "maxProjects": {
+            "title": "Maximum underfunded projects to process (0 = unlimited)",
+            "type": "integer",
+            "description": "Stop after this many genuinely underfunded projects have been queued for enrichment. Zero means keep going through everything the search and the funding filter allow.",
+            "editor": "number",
+            "default": 0
+        },
+        "crawlCreatorSites": {
+            "title": "Crawl the creator website",
+            "type": "boolean",
+            "description": "Visits the homepage of each discovered website plus any page that looks like a contact or about page. This is where most addresses are actually found.",
+            "default": true
+        },
+        "maxPagesPerSite": {
+            "title": "Maximum pages per website",
+            "type": "integer",
+            "description": "Budget of pages per website. Six is usually plenty.",
+            "editor": "number",
+            "default": 6,
+            "minimum": 1,
+            "maximum": 25
+        },
+        "minimumScore": {
+            "title": "Minimum quality score to keep an address",
+            "type": "integer",
+            "description": "Every address is scored from zero to one hundred. Fifty five keeps medium and high confidence only, seventy five keeps high confidence only. Zero keeps everything.",
+            "editor": "number",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 100
+        },
+        "useApifyProxy": {
+            "title": "Use Apify Proxy",
+            "type": "boolean",
+            "description": "Kickstarter runs Cloudflare in front of its site, so proxy rotation genuinely helps here more than it did on YouTube.",
+            "default": true
+        },
+        "requestDelayMs": {
+            "title": "Pause between project page reads in milliseconds",
+            "type": "integer",
+            "description": "A human sized pause between requests to Kickstarter's own site.",
+            "editor": "number",
+            "default": 1500,
+            "minimum": 0,
+            "maximum": 15000
+        }
+    },
+    "required": ["categoryId"]
+}
