@@ -7,7 +7,7 @@
             "title": "Category",
             "type": "integer",
             "description": "Which Kickstarter category to search. Design is 7, Film and Video is 10, Games is 12, Technology is 16. One category per run, matching how each has its own outreach batch.",
-            "editor": "select",
+            "editor": "number",
             "enum": [7, 10, 12, 16],
             "enumTitles": ["Design", "Film & Video", "Games", "Technology"],
             "default": 16
