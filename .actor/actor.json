@@ -1,0 +1,12 @@
+{
+    "actorSpecification": 1,
+    "name": "kickstarter-underfunded-contact-finder",
+    "title": "Kickstarter Underfunded Contact Finder",
+    "description": "Finds contact addresses for creators of Kickstarter projects that have not reached their funding goal, live or failed.",
+    "version": "0.0",
+    "dockerfile": "../Dockerfile",
+    "input": "./input_schema.json",
+    "storages": {
+        "dataset": "./dataset_schema.json"
+    }
+}
