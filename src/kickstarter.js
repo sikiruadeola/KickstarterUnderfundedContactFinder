@@ -3,74 +3,90 @@
  *
  * Everything that talks to Kickstarter lives here.
  *
- * Discovery uses Kickstarter's own public search endpoint, the exact one
- * their own site calls when you browse or filter by category:
- *   https://www.kickstarter.com/discover/advanced?format=json
- * No login, no key, no cookie.
+ * Real testing today established two separate facts worth writing down,
+ * since together they explain this whole file.
  *
- * The one thing that changed after the first attempt at this: every single
- * request here now goes out through its own brand new proxy address, never
- * a shared one reused across the run. A single address making hundreds of
- * requests in a row looks nothing like a real visitor, but hundreds of
- * different addresses each making one request looks exactly like hundreds
- * of different people, which is the actual behaviour real, working
- * Kickstarter scrapers rely on.
+ * One, the very first check Kickstarter's Cloudflare shows a visitor clears
+ * itself automatically the moment a real, JavaScript capable browser sits
+ * on the page for a short while, no click needed at all. A plain HTTP
+ * request can never do this, since it cannot run the challenge's own script,
+ * which is exactly why every earlier attempt with gotScraping, however
+ * clean the proxy address, was rejected outright with the same challenge
+ * page every single time.
  *
- * Known hard limit worth knowing: one single search query can only ever
- * reach twenty four hundred rows total, page two hundred works, page two
- * hundred and one is a genuine HTTP 404. Splitting a search by state, by
- * category or by search term is the only way past that ceiling.
+ * Two, a second, tougher check only ever showed up after one single browser
+ * session had already made a lot of requests in a row. That second one did
+ * need an actual person.
+ *
+ * Put together, the fix is a browser that is thrown away after doing one
+ * single thing, a fresh address and a fresh, empty browser for every single
+ * page, so no session ever lives long enough to earn that second, harder
+ * check in the first place.
  */
 
-import { gotScraping, log } from 'crawlee';
+import { chromium } from 'playwright';
 import * as cheerio from 'cheerio';
+import { log } from 'crawlee';
 
 const DISCOVER_ROOT = 'https://www.kickstarter.com/discover/advanced';
 
-function sleep(ms) {
-    return new Promise((r) => setTimeout(r, ms));
+function looksLikeChallenge(title) {
+    return /just a moment|checking your browser|attention required/i.test(title || '');
 }
 
-async function freshGet(url, proxyConfiguration, responseType, attemptsLeft = 3) {
-    // A brand new address for this one request, and only this one request.
+/**
+ * Opens one brand new browser on one brand new residential address, waits
+ * out the automatic check if one shows up, hands the live page to the
+ * caller, then closes everything down. Nothing here is reused between
+ * calls, that is the entire point.
+ */
+async function withDisposablePage(url, proxyConfiguration, handler) {
     const proxyUrl = proxyConfiguration ? await proxyConfiguration.newUrl() : undefined;
+    let parsedProxy;
+    if (proxyUrl) {
+        const p = new URL(proxyUrl);
+        parsedProxy = {
+            server: `${p.protocol}//${p.hostname}:${p.port}`,
+            username: p.username,
+            password: p.password,
+        };
+    }
 
-    // A short, human sized, randomised pause before every single request,
-    // so a burst of requests never lands in an implausibly tight window
-    // even though each one comes from a different address.
-    await sleep(1500 + Math.random() * 2500);
-
+    const browser = await chromium.launch({ headless: true });
     try {
-        return await gotScraping({
-            url,
-            proxyUrl,
-            timeout: { request: 30000 },
-            headerGeneratorOptions: {
-                browsers: ['chrome'],
-                devices: ['desktop'],
-                locales: ['en-US'],
-            },
-            responseType,
-            retry: { limit: 0 },
+        const context = await browser.newContext({
+            viewport: { width: 1280, height: 800 },
+            proxy: parsedProxy,
         });
-    } catch (error) {
-        // A single flaky exit node dropping a connection mid handshake is
-        // completely ordinary in any large rotating residential pool, not
-        // a sign of being blocked. The fix is simply a fresh address, not
-        // giving up on the first bad one.
-        if (attemptsLeft > 1) {
-            log.debug(`A proxy address failed (${error.message}), trying a fresh one.`);
-            return freshGet(url, proxyConfiguration, responseType, attemptsLeft - 1);
+        const page = await context.newPage();
+
+        const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => null);
+
+        let title = await page.title().catch(() => '');
+        if (looksLikeChallenge(title)) {
+            const started = Date.now();
+            while (Date.now() - started < 90000) {
+                await new Promise((r) => setTimeout(r, 2000));
+                title = await page.title().catch(() => '');
+                if (!looksLikeChallenge(title)) break;
+            }
         }
-        throw error;
+
+        if (looksLikeChallenge(title)) {
+            throw new Error('Challenge did not clear on its own within ninety seconds on a fresh browser.');
+        }
+
+        return await handler(page, response);
+    } finally {
+        await browser.close().catch(() => undefined);
     }
 }
 
 /**
  * Walks one category, one state, page by page, stopping on the first empty
  * page, the first real error, or the two hundred page ceiling Kickstarter
- * itself enforces, whichever comes first. Every page is its own fresh
- * address.
+ * itself enforces, whichever comes first. Every page gets its own fresh,
+ * disposable browser.
  */
 export async function discoverProjects({ categoryId, state, sort = 'newest', maxPages = 200, proxyConfiguration }) {
     const projects = [];
@@ -79,20 +95,19 @@ export async function discoverProjects({ categoryId, state, sort = 'newest', max
         const url = `${DISCOVER_ROOT}?format=json&category_id=${categoryId}&state=${state}&sort=${sort}&page=${page}`;
 
         let body;
-        let rawResponse;
         try {
-            rawResponse = await freshGet(url, proxyConfiguration, 'text');
-            body = JSON.parse(rawResponse.body);
+            body = await withDisposablePage(url, proxyConfiguration, async (p) => {
+                const text = await p.evaluate(() => document.body.innerText);
+                return JSON.parse(text);
+            });
         } catch (error) {
-            const statusCode = rawResponse ? rawResponse.statusCode : 'no response';
-            const snippet = rawResponse ? String(rawResponse.body).slice(0, 300) : '';
-            log.warning(`Discovery page ${page} for state ${state} failed: ${error.message}. Status: ${statusCode}. Body starts with: ${snippet}`);
+            log.warning(`Discovery page ${page} for state ${state} failed: ${error.message}. Stopping this state here.`);
             break;
         }
 
         const pageProjects = body?.projects || [];
         if (pageProjects.length === 0) {
-            log.warning(`State ${state}, page ${page} parsed fine but had zero projects. Status: ${rawResponse.statusCode}. Body starts with: ${String(rawResponse.body).slice(0, 300)}`);
+            log.info(`State ${state}, page ${page} came back empty. Reached the end of this slice.`);
             break;
         }
 
@@ -103,24 +118,26 @@ export async function discoverProjects({ categoryId, state, sort = 'newest', max
 }
 
 /**
- * Reads a single project's own public page, its own fresh address too.
- * Returns the full story text and every outbound link found anywhere on
- * the page that does not point back at kickstarter.com itself.
+ * Reads a single project's own public page, its own fresh disposable
+ * browser too. Returns the full story text and every outbound link found
+ * anywhere on the page that does not point back at kickstarter.com itself.
  */
 export async function fetchProjectPage(projectUrl, proxyConfiguration) {
     try {
-        const response = await freshGet(projectUrl, proxyConfiguration, 'text');
-        const $ = cheerio.load(response.body);
+        return await withDisposablePage(projectUrl, proxyConfiguration, async (p) => {
+            const html = await p.content();
+            const $ = cheerio.load(html);
 
-        const storyText = $('body').text().replace(/\s+/g, ' ').slice(0, 200000);
+            const storyText = $('body').text().replace(/\s+/g, ' ').slice(0, 200000);
 
-        const links = new Set();
-        $('a[href^="http"]').each((_, el) => {
-            const href = $(el).attr('href');
-            if (href) links.add(href);
+            const links = new Set();
+            $('a[href^="http"]').each((_, el) => {
+                const href = $(el).attr('href');
+                if (href) links.add(href);
+            });
+
+            return { storyText, links: cleanLinks([...links]) };
         });
-
-        return { storyText, links: cleanLinks([...links]) };
     } catch (error) {
         log.warning(`Could not read project page ${projectUrl}: ${error.message}`);
         return { storyText: '', links: [] };
