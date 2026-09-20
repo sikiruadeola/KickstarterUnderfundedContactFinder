@@ -6,18 +6,15 @@
  * Discovery uses Kickstarter's own public search endpoint, the exact one
  * their own site calls when you browse or filter by category:
  *   https://www.kickstarter.com/discover/advanced?format=json
- * No login, no key, no cookie. It hands back project name, funding numbers,
- * backer count, country, location and the creator id, name and profile link.
+ * No login, no key, no cookie.
  *
- * Reading a single project's own page is also fully public with no login
- * wall. That page carries the full story text and, further down, a short
- * biography for the creator plus any outbound links they have added, most
- * often their own website.
- *
- * Kickstarter runs Cloudflare in front of the site, more aggressively than
- * YouTube ever did, so every request here goes out with a realistic browser
- * header set through Crawlee's gotScraping, the same approach already
- * proven on the YouTube tool.
+ * The one thing that changed after the first attempt at this: every single
+ * request here now goes out through its own brand new proxy address, never
+ * a shared one reused across the run. A single address making hundreds of
+ * requests in a row looks nothing like a real visitor, but hundreds of
+ * different addresses each making one request looks exactly like hundreds
+ * of different people, which is the actual behaviour real, working
+ * Kickstarter scrapers rely on.
  *
  * Known hard limit worth knowing: one single search query can only ever
  * reach twenty four hundred rows total, page two hundred works, page two
@@ -30,41 +27,49 @@ import * as cheerio from 'cheerio';
 
 const DISCOVER_ROOT = 'https://www.kickstarter.com/discover/advanced';
 
-async function discoverGet(params, proxyUrl) {
-    const url = new URL(DISCOVER_ROOT);
-    url.searchParams.set('format', 'json');
-    for (const [key, value] of Object.entries(params)) {
-        if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
-    }
+function sleep(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+}
 
-    const response = await gotScraping({
-        url: url.toString(),
-        proxyUrl: proxyUrl || undefined,
+async function freshGet(url, proxyConfiguration, responseType) {
+    // A brand new address for this one request, and only this one request.
+    const proxyUrl = proxyConfiguration ? await proxyConfiguration.newUrl() : undefined;
+
+    // A short, human sized, randomised pause before every single request,
+    // so a burst of requests never lands in an implausibly tight window
+    // even though each one comes from a different address.
+    await sleep(1500 + Math.random() * 2500);
+
+    return gotScraping({
+        url,
+        proxyUrl,
         timeout: { request: 30000 },
         headerGeneratorOptions: {
             browsers: ['chrome'],
             devices: ['desktop'],
             locales: ['en-US'],
         },
-        responseType: 'json',
+        responseType,
+        retry: { limit: 0 },
     });
-
-    return response.body;
 }
 
 /**
- * Walks one category, one state, page by page, until either the pages run
- * dry or the twenty four hundred row ceiling is hit. Stops on the first
- * empty page or the first 404, whichever comes first, rather than guessing
- * a fixed page count.
+ * Walks one category, one state, page by page, stopping on the first empty
+ * page, the first real error, or the two hundred page ceiling Kickstarter
+ * itself enforces, whichever comes first. Every page is its own fresh
+ * address.
  */
-export async function discoverProjects({ categoryId, state, sort = 'newest', maxPages = 200, proxyUrl }) {
+export async function discoverProjects({ categoryId, state, sort = 'newest', maxPages = 200, proxyConfiguration }) {
     const projects = [];
 
     for (let page = 1; page <= maxPages; page += 1) {
+        const url = `${DISCOVER_ROOT}?format=json&category_id=${categoryId}&state=${state}&sort=${sort}&page=${page}`;
+
         let body;
         try {
-            body = await discoverGet({ category_id: categoryId, state, sort, page }, proxyUrl);
+            const response = await freshGet(url, proxyConfiguration, 'json');
+            body = response.body;
         } catch (error) {
             log.warning(`Discovery page ${page} for state ${state} failed: ${error.message}. Stopping this state here.`);
             break;
@@ -83,25 +88,13 @@ export async function discoverProjects({ categoryId, state, sort = 'newest', max
 }
 
 /**
- * Reads a single project's own public page.
- *
- * Returns the full story text, a best guess at the creator's own short
- * biography text, and every outbound link found anywhere on the page that
- * does not point back at kickstarter.com itself.
+ * Reads a single project's own public page, its own fresh address too.
+ * Returns the full story text and every outbound link found anywhere on
+ * the page that does not point back at kickstarter.com itself.
  */
-export async function fetchProjectPage(projectUrl, proxyUrl) {
+export async function fetchProjectPage(projectUrl, proxyConfiguration) {
     try {
-        const response = await gotScraping({
-            url: projectUrl,
-            proxyUrl: proxyUrl || undefined,
-            timeout: { request: 30000 },
-            headerGeneratorOptions: {
-                browsers: ['chrome'],
-                devices: ['desktop'],
-                locales: ['en-US'],
-            },
-        });
-
+        const response = await freshGet(projectUrl, proxyConfiguration, 'text');
         const $ = cheerio.load(response.body);
 
         const storyText = $('body').text().replace(/\s+/g, ' ').slice(0, 200000);
@@ -112,14 +105,10 @@ export async function fetchProjectPage(projectUrl, proxyUrl) {
             if (href) links.add(href);
         });
 
-        return {
-            storyText,
-            links: cleanLinks([...links]),
-            rawHtml: response.body,
-        };
+        return { storyText, links: cleanLinks([...links]) };
     } catch (error) {
         log.warning(`Could not read project page ${projectUrl}: ${error.message}`);
-        return { storyText: '', links: [], rawHtml: '' };
+        return { storyText: '', links: [] };
     }
 }
 
@@ -156,11 +145,6 @@ function cleanLinks(urls) {
     return [...out.values()];
 }
 
-/**
- * Split discovered links into a creator's own site versus social profiles,
- * same idea as the YouTube tool. Social platforms hide contact details
- * behind their own logins, so they are recorded but never crawled.
- */
 export function splitLinks(urls) {
     const socialHosts = [
         'twitter.com', 'x.com', 'instagram.com', 'facebook.com', 'tiktok.com',
