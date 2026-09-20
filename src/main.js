@@ -50,8 +50,7 @@ if (!categoryId) {
     throw new Error('No categoryId supplied. Design is 7, Film and Video is 10, Games is 12, Technology is 16.');
 }
 
-const proxyConfiguration = useApifyProxy ? await Actor.createProxyConfiguration() : undefined;
-const proxyUrl = proxyConfiguration ? await proxyConfiguration.newUrl() : null;
+const proxyConfiguration = useApifyProxy ? await Actor.createProxyConfiguration({ groups: ['RESIDENTIAL'] }) : undefined;
 
 /* ================================================================== */
 /* STEP 1. Discover, one state at a time, then keep only underfunded.  */
@@ -66,7 +65,7 @@ const underfunded = [];
 
 for (const state of states) {
     log.info(`Searching category ${categoryId}, state ${state}.`);
-    const projects = await discoverProjects({ categoryId, state, sort, maxPages: maxPagesPerState, proxyUrl });
+    const projects = await discoverProjects({ categoryId, state, sort, maxPages: maxPagesPerState, proxyConfiguration });
     log.info(`State ${state} returned ${projects.length} projects before any filtering.`);
 
     for (const p of projects) {
@@ -102,7 +101,7 @@ for (const project of underfunded) {
     const creatorUrl = project?.creator?.urls?.web?.user;
     if (!projectUrl) continue;
 
-    const { storyText, links } = await fetchProjectPage(projectUrl, proxyUrl);
+    const { storyText, links } = await fetchProjectPage(projectUrl, proxyConfiguration);
     await sleep(requestDelayMs);
 
     const hits = [
