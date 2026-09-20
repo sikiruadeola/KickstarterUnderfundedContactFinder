@@ -31,7 +31,7 @@ function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
 }
 
-async function freshGet(url, proxyConfiguration, responseType) {
+async function freshGet(url, proxyConfiguration, responseType, attemptsLeft = 3) {
     // A brand new address for this one request, and only this one request.
     const proxyUrl = proxyConfiguration ? await proxyConfiguration.newUrl() : undefined;
 
@@ -40,18 +40,30 @@ async function freshGet(url, proxyConfiguration, responseType) {
     // even though each one comes from a different address.
     await sleep(1500 + Math.random() * 2500);
 
-    return gotScraping({
-        url,
-        proxyUrl,
-        timeout: { request: 30000 },
-        headerGeneratorOptions: {
-            browsers: ['chrome'],
-            devices: ['desktop'],
-            locales: ['en-US'],
-        },
-        responseType,
-        retry: { limit: 0 },
-    });
+    try {
+        return await gotScraping({
+            url,
+            proxyUrl,
+            timeout: { request: 30000 },
+            headerGeneratorOptions: {
+                browsers: ['chrome'],
+                devices: ['desktop'],
+                locales: ['en-US'],
+            },
+            responseType,
+            retry: { limit: 0 },
+        });
+    } catch (error) {
+        // A single flaky exit node dropping a connection mid handshake is
+        // completely ordinary in any large rotating residential pool, not
+        // a sign of being blocked. The fix is simply a fresh address, not
+        // giving up on the first bad one.
+        if (attemptsLeft > 1) {
+            log.debug(`A proxy address failed (${error.message}), trying a fresh one.`);
+            return freshGet(url, proxyConfiguration, responseType, attemptsLeft - 1);
+        }
+        throw error;
+    }
 }
 
 /**
