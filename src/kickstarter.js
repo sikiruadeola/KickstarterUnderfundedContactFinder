@@ -34,6 +34,17 @@ function looksLikeChallenge(title) {
     return /just a moment|checking your browser|attention required/i.test(title || '');
 }
 
+async function safeTitle(page) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+            return await page.title();
+        } catch {
+            await new Promise((r) => setTimeout(r, 500));
+        }
+    }
+    return '';
+}
+
 /**
  * Opens one brand new browser on one brand new residential address, waits
  * out the automatic check if one shows up, hands the live page to the
@@ -67,19 +78,26 @@ async function withDisposablePage(url, proxyConfiguration, handler) {
 
         const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => null);
 
-        let title = await page.title().catch(() => '');
+let title = await safeTitle(page);
         if (looksLikeChallenge(title)) {
             const started = Date.now();
             while (Date.now() - started < 150000) {
                 await new Promise((r) => setTimeout(r, 2000));
-                title = await page.title().catch(() => '');
+                title = await safeTitle(page);
                 if (!looksLikeChallenge(title)) break;
             }
         }
 
         if (looksLikeChallenge(title)) {
-            throw new Error('Challenge did not clear on its own within ninety seconds on a fresh browser.');
+            throw new Error('Challenge did not clear on its own within two and a half minutes on a fresh browser.');
         }
+
+        // The moment a challenge finishes clearing, the page navigates on
+        // its own, which can destroy whatever execution context the very
+        // next call was about to use. That is progress, not a failure, so
+        // give the page a brief moment to settle before reading it.
+        await page.waitForLoadState('domcontentloaded').catch(() => undefined);
+        await new Promise((r) => setTimeout(r, 1000));
 
         return await handler(page, response);
     } finally {
