@@ -52,11 +52,16 @@ async function withDisposablePage(url, proxyConfiguration, handler) {
         };
     }
 
-    const browser = await chromium.launch({ headless: true });
+    const browser = await chromium.launch({ headless: false, args: ['--disable-blink-features=AutomationControlled'] });
     try {
         const context = await browser.newContext({
             viewport: { width: 1280, height: 800 },
             proxy: parsedProxy,
+        });
+        await context.addInitScript(() => {
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
+            if (!window.chrome) window.chrome = { runtime: {} };
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
         });
         const page = await context.newPage();
 
@@ -65,7 +70,7 @@ async function withDisposablePage(url, proxyConfiguration, handler) {
         let title = await page.title().catch(() => '');
         if (looksLikeChallenge(title)) {
             const started = Date.now();
-            while (Date.now() - started < 90000) {
+            while (Date.now() - started < 150000) {
                 await new Promise((r) => setTimeout(r, 2000));
                 title = await page.title().catch(() => '');
                 if (!looksLikeChallenge(title)) break;
