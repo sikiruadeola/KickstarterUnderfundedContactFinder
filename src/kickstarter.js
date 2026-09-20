@@ -67,17 +67,20 @@ export async function discoverProjects({ categoryId, state, sort = 'newest', max
         const url = `${DISCOVER_ROOT}?format=json&category_id=${categoryId}&state=${state}&sort=${sort}&page=${page}`;
 
         let body;
+        let rawResponse;
         try {
-            const response = await freshGet(url, proxyConfiguration, 'json');
-            body = response.body;
+            rawResponse = await freshGet(url, proxyConfiguration, 'text');
+            body = JSON.parse(rawResponse.body);
         } catch (error) {
-            log.warning(`Discovery page ${page} for state ${state} failed: ${error.message}. Stopping this state here.`);
+            const statusCode = rawResponse ? rawResponse.statusCode : 'no response';
+            const snippet = rawResponse ? String(rawResponse.body).slice(0, 300) : '';
+            log.warning(`Discovery page ${page} for state ${state} failed: ${error.message}. Status: ${statusCode}. Body starts with: ${snippet}`);
             break;
         }
 
         const pageProjects = body?.projects || [];
         if (pageProjects.length === 0) {
-            log.info(`State ${state}, page ${page} came back empty. Reached the end of this slice.`);
+            log.warning(`State ${state}, page ${page} parsed fine but had zero projects. Status: ${rawResponse.statusCode}. Body starts with: ${String(rawResponse.body).slice(0, 300)}`);
             break;
         }
 
