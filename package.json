@@ -1,18 +1,19 @@
 {
-    "name": "kickstarter-underfunded-contact-finder",
-    "version": "1.0.0",
-    "type": "module",
-    "description": "Finds publicly published contact addresses for creators of underfunded Kickstarter projects, live and failed.",
-    "engines": {
-        "node": ">=18"
-    },
-    "dependencies": {
-        "apify": "^3.2.6",
-        "crawlee": "^3.11.5",
-        "cheerio": "^1.0.0"
-    },
-    "scripts": {
-        "start": "node src/main.js"
-    },
-    "license": "MIT"
+  "name": "kickstarter-underfunded-contact-finder",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Finds contact addresses for creators of underfunded Kickstarter projects, using a fresh disposable browser and address for every single request.",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "apify": "^3.2.6",
+    "crawlee": "^3.11.5",
+    "playwright": "^1.47.0",
+    "cheerio": "^1.0.0"
+  },
+  "scripts": {
+    "start": "node src/main.js"
+  },
+  "license": "MIT"
 }
