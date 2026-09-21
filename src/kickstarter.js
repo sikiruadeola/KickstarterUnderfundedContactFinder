@@ -173,6 +173,8 @@ function cleanLinks(urls) {
         'instagram.com', 'google.com', 'gstatic.com', 'googleapis.com', 'apple.com',
         'play.google.com', 'youtube.com', 'youtu.be', 'schema.org', 'w3.org',
         'trustarc.com', 'privacy-mgmt.com', 'sift.com', 'qualtrics.com',
+        'connect.facebook.net', 'google-analytics.com', 'googletagmanager.com',
+        'doubleclick.net', 'hotjar.com', 'cloudflareinsights.com',
     ];
 
     const out = new Map();
